@@ -1,0 +1,619 @@
+---
+title: "Improving Direct Marketing Campaigns for a National Veterans' Organization"
+author: "Joshua Lazaro"
+date: "May 10, 2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction:
+A national veterans' organization aims to improve the cost-effectiveness of their direct marketing campaign. With an in-house database of over 13 million donors, the organization is one of the largest direct-mail fundraisers in the United States. This report presents the background information, business objectives, and data used to develop a classification model for capturing donors more effectively and maximizing the expected net profit.
+
+
+# Background Information:
+
+According to the organization's recent mailing records:
+
+* The overall response rate is 5.1%.
+** Out of those who responded (donated), the average donation is $13.00.
+* Each mailing, which includes a gift of personalized address labels and assortments of cards and envelopes, costs $0.68 to produce and send.
+
+To achieve the desired goal, we will:
+
+* Use a sample of this dataset to develop a classification model that can effectively capture donors.
+** Optimize the model so that the expected net profit is maximized.
+* Employ weighted sampling, under-representing the non-responders.
+** Ensure the sample has equal numbers of donors and non-donors.
+
+# Business Objectives and Goals. 
+
+Successful businesses are based on both goals and objectives, as they clarify the purpose of the business and help identify necessary actions. Goals are general statements of desired achievement, while objectives are the specific steps or actions you take to reach your goal.
+
+# Data
+
+The organization has made available a sample data file named "fundraising.rds" from their latest fundraising campaign. This data set consists of 21 variables and 3,000 records. It is worth noting that the data is weighted and represents a deliberate under-representation of non-donors. This approach allows us to have a balanced sample of donors and non-donors for our analysis. 
+* The target variable in this data set, referred to as "target," is a categorical variable indicating whether an individual is a donor or not. 
+* The remaining variables in the data set are either categorical or numerical. 
+* The categorical variables include zipconvert2, zipconvert3, zipconvert4, zipconvert5, homeowner, and female. 
+* The numerical variables include num_child, income, wealth, home_value, med_fam_inc, avg_fam_inc, pct_lt15k, num_prom, lifetime_gifts, largest_gift, last_gift, months_since_donate, time_lag, and avg_gift.
+
+
+```{r}
+train = readRDS("C:\\Users\\lazar\\Documents\\Spring2023\\DataMining\\FinalProj\\fundraising.rds")
+test = readRDS("C:\\Users\\lazar\\Documents\\Spring2023\\DataMining\\FinalProj\\future_fundraising.rds")
+```
+
+```{r}
+sum(is.na(train))
+summary(train)
+```
+
+
+Calculating Correlations
+```{r, echo=FALSE, results='hide'}
+# need to 
+temp = train
+
+temp$zipconvert2 = ifelse(temp$zipconvert2 == "Yes", 1,0) 
+temp$zipconvert3 = ifelse(temp$zipconvert3 == "Yes", 1,0)
+temp$zipconvert4 = ifelse(temp$zipconvert4 == "Yes", 1,0)
+temp$zipconvert5 = ifelse(temp$zipconvert5 == "Yes", 1,0)
+temp$homeowner = ifelse(temp$homeowner == "Yes", 1,0)
+temp$female = ifelse(temp$female == "Yes", 1,0) # female =1, non = 0
+temp$target = ifelse(temp$target == "Donor", 1,0) # donor = 1, non = 0
+
+```
+
+
+```{r}
+library(corrplot)
+library(caret)
+res = cor(temp)
+round(res, 2)
+
+corrplot(res, type = "upper", order = "hclust",
+         tl.col = "black", tl.srt = 45)
+```
+There appears to be a strong negative correlation between median family and avg_fam_inc with  pct_it15k
+
+```{r}
+highly_correlated <- findCorrelation(res, cutoff = 0.8, verbose = TRUE)
+highly_correlated
+```
+
+Row 12 and Column 11 (med_fam_income) have a correlation coefficient of 0.972, and the mean values for the two variables are 0.214 and 0.106, respectively. Based on this, you have flagged Column 12 (med_fam_income) as potentially redundant or highly correlated with Row 12.
+
+Row 20 and Column 17 (last_gift) have a correlation coefficient of 0.866, and the mean values for the two variables are 0.151 and 0.098, respectively. Based on this, you have flagged Column 20 (last_gift) as potentially redundant or highly correlated with Row 20.
+
+```{r}
+library(ggplot2)
+
+# Set the figure size and resolution
+options(repr.plot.width=16, repr.plot.height=10, repr.plot.res=300)
+
+# Define the list of excluded variables
+excluded_vars <- c("zipconvert2","zipconvert3","zipconvert4", "zipconvert5", "female")
+
+# Filter only numeric columns and remove excluded variables
+numeric_data <- temp[sapply(temp, is.numeric)]
+filtered_data <- numeric_data[!(names(numeric_data) %in% excluded_vars)]
+
+# Remove rows with missing values from the filtered_data
+filtered_data <- na.omit(filtered_data)
+
+# Melt the filtered data into a long format
+library(reshape2)
+melted_data <- melt(filtered_data)
+
+# Create the histograms
+histograms <- ggplot(melted_data, aes(x = value)) +
+  geom_histogram(bins = 30, color = "black", fill = "skyblue", alpha = 0.7) +
+  facet_wrap(~ variable, scales = "free_x", ncol = 3) +
+  theme_minimal() +
+  theme(strip.text.x = element_text(size = 12, face = "bold"),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+
+# Display the histograms
+print(histograms)
+
+```
+
+Looking at our variables, it appears that our data is not normally distributed
+
+
+```{r}
+library(GGally)
+library(dplyr)
+# Select the desired variables from your dataset
+selected_data <- temp %>%
+  select(zipconvert2, zipconvert3, zipconvert4, zipconvert5, homeowner, num_child, income, 
+         female, wealth, home_value, med_fam_inc, avg_fam_inc, pct_lt15k, num_prom, 
+         lifetime_gifts, largest_gift, last_gift, months_since_donate, time_lag, avg_gift, target)
+
+# Create the pairwise plot using ggpairs()
+pairwise_plot <- selected_data %>%
+  ggpairs(aes(fill = target))
+
+# Display the pairwise plot
+print(pairwise_plot)
+
+```
+
+Here is an interesting way to visualize these variables. Strong correlations appear as presented in our correlation matrix shown, however, other non-linear distributions also appear in this graph. 
+The numeric variables within the dataset exhibit some degree of skewness, as both the skewness and skew.2SE (2 standard errors) values are above 1, which indicates non-normality.
+
+
+Now, I am ready to begin analyzing the data. I will begin with the XGBoost model
+
+# XGBoost
+
+I understand that this model was not taught in class, however, I would like to use it. 
+The professor approved of this model.
+
+XGBoost (Extreme Gradient Boosting) is a popular machine learning algorithm that uses a boosted tree model to solve regression, classification, and ranking problems. The model is based on an ensemble of decision trees that are trained sequentially to correct errors made by the previous trees.
+
+The main advantages of XGBoost include its ability to handle large datasets, its fast training speed, and its high predictive accuracy, which has made it a popular choice in data science competitions and industry applications. XGBoost also includes various regularization techniques to prevent overfitting and can handle missing values and outliers.
+
+```{r}
+library(data.table)
+library(dplyr)
+library(xgboost)
+library(tidyverse)
+library(DiagrammeR)
+```
+
+
+```{r, echo=FALSE, results='hide'}
+train <- readRDS("C:\\Users\\lazar\\Documents\\Spring2023\\DataMining\\FinalProj\\fundraising.rds")
+```
+
+##### cross validation:
+
+Here, I will create variable k to cross validate my data
+
+k will be set to 5 folds. 
+This will allow for 80% training, and 20% testing
+```{r}
+# set k folds:
+k = 5 #allows for 2400 train (80% training) and 600 test (20% testing)
+fold_nonNumeric = vector(mode = "list", length = k)
+ID = vector(mode = "list", length = k)
+pred = vector(mode = "list", length = k)
+predID = vector(mode = "list", length = k)
+status = vector(mode = "list", length = k)
+```
+
+
+Here we set a random seed to ensure reproducibility of the results. It then assigns a unique ID to each row in the train dataset. Then we shuffle the dataset and create k folds for cross-validation. It does so by randomly shuffling the rows and assigning each row to one of the k folds. The dataset is then sorted by the fold assignments, resulting in a shuffled dataset with an additional fold column that can be used for cross-validation purposes.
+
+```{r}
+set.seed(12345)
+# unique ID
+train$index = 1:nrow(train)
+
+# shuffle it up
+train <- train %>% 
+  sample_frac(size = 1) %>% # these 2 lines randomly shuffle the rows
+  mutate(fold = rep(1:k, length = n())) %>%  # returns with 1:k (the num of rows there are)
+  arrange(fold)
+```
+
+```{r, echo=FALSE, results='hide'}
+target = train$target
+target <- ifelse(train$target == "Donor", 1, 0)
+head(zipconvert2<-model.matrix(~ zipconvert2-1, train))
+head(zipconvert3 <- model.matrix(~ zipconvert3-1, train))
+head(zipconvert4 <- model.matrix(~ zipconvert4-1, train))
+head(zipconvert5 <- model.matrix(~ zipconvert5-1, train))
+head(homeowner <- model.matrix(~ homeowner-1, train))
+head(female <- model.matrix(~ female-1, train))
+
+train = train %>% 
+  select(-zipconvert2, -zipconvert3, -zipconvert4, -zipconvert5, -homeowner, -female)
+
+tempA = cbind(zipconvert5, homeowner, female)
+train = as.data.frame(cbind(tempA, train))
+
+train$target = ifelse(train$target == "Donor", 1, 0)
+
+```
+
+Once the folds are created, here we do our 5 fold CV using XGBoost
+```{r}
+set.seed(12345)
+for(i in 1:k){
+  train_cv <- train %>% 
+    filter(fold != i)
+  test_cv <- train %>% 
+    filter(fold == i)
+  
+  train_cv$index = NULL
+  test_cv$index = NULL
+  
+  train_cv$fold = NULL
+  test_cv$fold = NULL
+  x_train <- train_cv
+  x_test <- test_cv
+  x_train$target = NULL
+  x_test$target = NULL
+  
+  #loopID = test_cv[,22] #gets the index number
+  loopStatus = test_cv[,21]
+  
+  #loopID = as.matrix(loopID)
+  loopStatus = as.matrix(loopStatus)
+  
+  x_train = as.matrix(x_train)
+  x_test = as.matrix(x_test)
+  
+
+  
+  test_cv = as.data.frame(test_cv)
+  train_cv = as.data.frame(train_cv)
+  
+  #dtrain = xgb.DMatrix(x_train, label = train_cv$target)
+  #dtest = xgb.DMatrix(x_test, label = test_cv$target)
+  
+  model = xgboost(x_train, train_cv$target,
+                  nround = 10,
+                  objective = "binary:logistic",
+                  eval_metric = "error")
+  
+  pred = predict(model, x_test)
+  
+  fold_nonNumeric[[i]] = pred
+  
+  #ID[[i]] = loopID
+  status[[i]] = loopStatus
+}
+
+ID = unlist(ID)
+fold_nonNumeric = unlist(fold_nonNumeric)
+status = unlist(status)
+
+Predictions = cbind(ID, fold_nonNumeric, status)
+```
+
+```{r}
+importance_matrix = xgb.importance(names(x_train), model = model)
+xgb.plot.importance(importance_matrix)
+
+xgb.plot.tree(model = model, trees = 1)
+```
+The variables that our model found to be the most important are:
+home_value, lifetime_gifts, and avg_gift
+
+We are also able to visualize the xgboost trees created by our model. 
+
+```{r}
+Predictions = as.data.frame(Predictions)
+Predictions$binary_pred <- ifelse(Predictions$fold_nonNumeric > 0.5, 1, 0)
+```
+
+
+```{r}
+library(caret)
+
+conf_mat <- confusionMatrix(factor(Predictions$binary_pred), factor(Predictions$status))
+print(conf_mat)
+```
+This model, despite it being an efficient and scalable gradient boosting algorithm that is particularly effective in handling large datasets and solving complex machine learning problems, such as classification and regression tasks, did not do such a great job on the training set. 
+
+We had a 53% accuracy in our model with a kappa of .0533. 
+
+
+Now that my data is trained, it is time to run my training model on the test model. However, variables have to be reformated to fit our train model 
+
+```{r, echo=FALSE, results='hide'}
+test = readRDS("C:\\Users\\lazar\\Documents\\Spring2023\\DataMining\\FinalProj\\future_fundraising.rds")
+
+head(zipconvert2<-model.matrix(~ zipconvert2-1, test))
+head(zipconvert3 <- model.matrix(~ zipconvert3-1, test))
+head(zipconvert4 <- model.matrix(~ zipconvert4-1, test))
+head(zipconvert5 <- model.matrix(~ zipconvert5-1, test))
+head(homeowner <- model.matrix(~ homeowner-1, test))
+head(female <- model.matrix(~ female-1, test))
+
+test = test %>% 
+  select(-zipconvert2, -zipconvert3, -zipconvert4, -zipconvert5, -homeowner, -female)
+
+tempA = cbind(zipconvert5, homeowner, female)
+test = as.data.frame(cbind(tempA, test))
+
+test = as.matrix(test)
+
+pred = predict(model, test)
+
+```
+
+
+```{r, echo=FALSE, results='hide'}
+pred = as.data.frame(pred)
+
+pred$pred <- ifelse(pred$pred > .5, "Donor", "No Donor")
+
+colnames(pred) = "value"
+
+#write.csv(pred, file ="C:\\Users\\lazar\\Downloads\\values.csv" )
+
+```
+
+
+My second model of choice is Random Forest
+
+# Random Forest
+
+A random forest is an ensemble learning method that constructs multiple decision trees during training and combines their predictions to produce a more accurate and robust result. It reduces overfitting by averaging the predictions of multiple trees and can handle both classification and regression tasks. 
+
+Note, this is different as XGBoost, on the other hand, is an optimized implementation of gradient boosting, which builds trees sequentially, with each new tree correcting the errors made by the previous ones. While both methods use decision trees, XGBoost employs a boosting technique to minimize the loss function, whereas random forests use bagging to reduce the model variance.
+
+
+```{r}
+library(randomForest)
+library(mlbench)
+library(caret)
+
+
+```
+
+
+```{r, echo=FALSE, results='hide'}
+# read the data:
+train <- readRDS("C:\\Users\\lazar\\Documents\\Spring2023\\DataMining\\FinalProj\\fundraising.rds")
+target = train$target
+target <- ifelse(train$target == "Donor", 1, 0)
+head(zipconvert2<-model.matrix(~ zipconvert2-1, train))
+head(zipconvert3 <- model.matrix(~ zipconvert3-1, train))
+head(zipconvert4 <- model.matrix(~ zipconvert4-1, train))
+head(zipconvert5 <- model.matrix(~ zipconvert5-1, train))
+head(homeowner <- model.matrix(~ homeowner-1, train))
+head(female <- model.matrix(~ female-1, train))
+
+train = train %>% 
+  select(-zipconvert2, -zipconvert3, -zipconvert4, -zipconvert5, -homeowner, -female)
+
+tempA = cbind(zipconvert5, homeowner, female)
+train = as.data.frame(cbind(tempA, train))
+
+train$target = ifelse(train$target == "Donor", 1, 0)
+
+trainn = train
+```
+
+
+80% train, and 20% test
+```{r}
+library(caret)
+library(vcd)
+# Set the seed for reproducibility
+set.seed(12345)
+
+# Create an index for the 80/20 split
+index <- createDataPartition(train$target, p = 0.8, list = FALSE)
+
+# Split the data into training and test sets
+train <- trainn[index, ]
+test <- train[-index, ]
+
+
+x = as.data.frame(train[,1:20])
+y = as.data.frame(train[,21])
+```
+
+
+Creating our model
+
+```{r}
+train$target <- as.factor(train$target) # convert to factor
+control = trainControl(method = "repeatedcv", number = 10, repeats = 3)
+seed = 12345
+metric = "Accuracy"
+mtry = sqrt(ncol(x))
+tunegrid = expand.grid(.mtry = mtry)
+rf_default <- train(target~., data=train, method="rf", metric=metric, tuneGrid=tunegrid, trControl=control)
+print(rf_default)
+
+```
+
+```{r}
+# Random Search
+control <- trainControl(method="repeatedcv", number=10, repeats=3, search="random")
+set.seed(12345)
+mtry <- sqrt(ncol(x))
+rf_random <- train(target~., data=train, method="rf", metric=metric, tuneLength=15, trControl=control)
+print(rf_random)
+plot(rf_random)
+```
+
+ 
+I ended up using a random search to identify the best parameter. 
+The model was trained using cross-validation with 10 folds and 3 repetitions, and the best value for the mtry parameter was found to be 1, based on the highest accuracy score. The final model had an accuracy of 0.549 and a kappa value of 0.098.
+
+
+```{r}
+# Get variable importance scores using varImp() function
+var_importance <- varImp(rf_random)
+
+# Print the variable importance scores
+print(var_importance)
+
+# Plot the variable importance scores
+plot(var_importance, main = "Variable Importance Plot")
+```
+Similarly to the XGBoost model, important variables include:
+* avg_gift
+* home_value
+* med_fam_inc
+
+
+
+Extended Caret:
+
+Here we create a custom random forest model for use with the caret package, specifying the model type, library, parameters, and functions for creating a grid, fitting the model, making predictions, calculating probabilities, sorting results, and extracting class levels.\
+* Takes too long to run * 
+```{r}
+# customRF <- list(type = "Classification", library = "randomForest", loop = NULL)
+# customRF$parameters <- data.frame(parameter = c("mtry", "ntree"), class = rep("numeric", 2), label = c("mtry", "ntree"))
+# customRF$grid <- function(x, y, len = NULL, search = "grid") {}
+# customRF$fit <- function(x, y, wts, param, lev, last, weights, classProbs, ...) {
+#   randomForest(x, y, mtry = param$mtry, ntree=param$ntree, ...)
+# }
+# customRF$predict <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+#    predict(modelFit, newdata)
+# customRF$prob <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+#    predict(modelFit, newdata, type = "prob")
+# customRF$sort <- function(x) x[order(x[,1]),]
+# customRF$levels <- function(x) x$classes
+```
+
+```{r}
+# # train model
+# control <- trainControl(method="repeatedcv", number=10, repeats=3)
+# tunegrid <- expand.grid(.mtry=c(1:15), .ntree=c(1000, 1500, 2000, 2500))
+# set.seed(seed)
+# custom <- train(target~., data=train, method=customRF, metric=metric, tuneGrid=tunegrid, trControl=control)
+# summary(custom)
+# plot(custom)
+```
+
+```{r}
+# Extract the best parameter value
+best_mtry <- rf_random$bestTune$mtry
+
+# Train a new model on the full training set using the best parameter value
+model <- randomForest(target ~ ., data = train, mtry = best_mtry)
+
+# Generate predictions on the test set using the trained model
+predictions <- predict(model, newdata = test)
+
+# Evaluate the performance of the model on the test set using the same metric as before
+accuracy <- mean(predictions == test$target)
+
+# Print the performance metrics
+cat("Accuracy on test set: ", accuracy, "\n")
+```
+```{r}
+library(ROCR)
+# Generate predictions on the test set using the trained model
+predictions <- predict(model, newdata = test)
+
+# Convert predictions and test$target to factors with the same levels
+predictions <- factor(predictions, levels = c("0", "1"))
+test$target <- factor(test$target, levels = c("0", "1"))
+
+# Create a confusion matrix using caret::confusionMatrix()
+conf_matrix <- confusionMatrix(predictions, test$target)
+
+# Print the confusion matrix
+print(conf_matrix)
+
+```
+
+The overall accuracy of the model is 0.7764, and the kappa coefficient is 0.5527, indicating moderate agreement between the predicted and actual classifications.
+However, this accuracy makes me feel that the data might have been overfitted.
+
+Here I will proceed to use the test rmds and upload the files. 
+
+```{r, echo=FALSE, results='hide'}
+test = readRDS("C:\\Users\\lazar\\Documents\\Spring2023\\DataMining\\FinalProj\\future_fundraising.rds")
+
+head(zipconvert2<-model.matrix(~ zipconvert2-1, test))
+head(zipconvert3 <- model.matrix(~ zipconvert3-1, test))
+head(zipconvert4 <- model.matrix(~ zipconvert4-1, test))
+head(zipconvert5 <- model.matrix(~ zipconvert5-1, test))
+head(homeowner <- model.matrix(~ homeowner-1, test))
+head(female <- model.matrix(~ female-1, test))
+
+test = test %>% 
+  select(-zipconvert2, -zipconvert3, -zipconvert4, -zipconvert5, -homeowner, -female)
+
+tempA = cbind(zipconvert5, homeowner, female)
+test = as.data.frame(cbind(tempA, test))
+```
+
+```{r}
+set.seed(12345)
+pred <- predict(model, newdata = test)
+
+pred <- as.data.frame(pred)
+
+# Convert factor levels to "Donor" and "No Donor"
+levels(pred$pred) <- c("No Donor", "Donor")
+
+# Rename column to "value"
+colnames(pred) <- "value"
+
+
+#write.csv(pred, file ="C:\\Users\\lazar\\Downloads\\values_rf.csv" )
+```
+
+
+# Model Result recap:
+
+The reason for using weighted sampling to produce a training set with equal numbers of donors and non-donors is to address the issue of class imbalance. In this case, the original dataset contains a significantly higher number of non-donors than donors. If a simple random sample is taken from the original dataset, the training set may not have enough donors to accurately represent the donor class. This can lead to a biased model that performs poorly in predicting donor behavior.
+
+The important variables for both of these models were:
+
+* avg_gift
+* home_value
+* med_fam_inc
+
+Both models used ALL of the variables
+
+The XGBoost model exhibited poor performance with an accuracy of only 53% and a kappa coefficient of 0.0533 on the test set. On the contrary, the random forest model with random search demonstrated moderate agreement between predicted and actual classifications, achieving an accuracy of 0.7764 and a kappa coefficient of 0.5527 on the test set. However, the high accuracy score of the random forest model raises concerns about overfitting. (These tables are listed in the models (scroll up))
+In this case, random forest dominates. 
+
+It is important to note that for XGBoost, I had to use the default parameters (explained in recomendations). However, cut off values where used. 
+
+Interestingly, when the models were evaluated using the leaderboard website, the XGBoost model outperformed the random forest with an accuracy score of 61.7% compared to 58.33%.
+
+Although the random forest model initially appeared promising, its underperformance in the modeling competition suggests that it might have been overfitted to the training data. On the other hand, despite the XGBoost model's lower accuracy score on the training set, it proved to be more effective in predicting outcomes in the competition.
+
+Overall, I belive that in terms of our training set, the Random forrest is the best, however, in the application, XGBoost takes the win.
+
+# Recommendations:
+
+As far as the modeling goes in XGBoost, I attempted to define a hyperparameter space such as the following:
+
+```{r}
+  # # Define the model's hyperparameter search space
+  # param_grid <- expand.grid(
+  #   nrounds = c(50),
+  #   max_depth = c(3, 4, 5),
+  #   eta = c(0.01, 0.02, 0.05, 0.1, 0.2),
+  #   gamma = c( 0.1, 0.2, 0.3, 0.4),
+  #   colsample_bytree = c(0.5, 0.6, 0.7),
+  #   min_child_weight = c(1, 2, 3, 4, 5),
+  #   subsample = c(0.5, 0.6, 0.7, 0.8, 0.9, 1)
+  # )
+
+```
+
+However, this technique took more than whole night to run (and did not finish), and I decided that it was too computationally expensive to continue. 
+The same applies to my extended caret model:
+
+```{r}
+# customRF <- list(type = "Classification", library = "randomForest", loop = NULL)
+# customRF$parameters <- data.frame(parameter = c("mtry", "ntree"), class = rep("numeric", 2), label = c("mtry", "ntree"))
+# customRF$grid <- function(x, y, len = NULL, search = "grid") {}
+# customRF$fit <- function(x, y, wts, param, lev, last, weights, classProbs, ...) {
+#   randomForest(x, y, mtry = param$mtry, ntree=param$ntree, ...)
+# }
+# customRF$predict <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+#    predict(modelFit, newdata)
+# customRF$prob <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+#    predict(modelFit, newdata, type = "prob")
+# customRF$sort <- function(x) x[order(x[,1]),]
+# customRF$levels <- function(x) x$classes
+```
+I attempted to adjust hyperparameters by defining a hyperparameter search space for XGBoost and using extended caret model. However, due to the computational expense, I recommend using better hardware, such as a cluster, to speed up the process of training the data set. However, overfitting can still occur. 
+
+I recommend adding more variables to the data set, such as marketing, holiday seasons, and advertisement media, to help pinpoint the donor population. These variables can provide additional insights into the factors that influence donor behavior.
+
+In addition to XGBoost and random forest models, I suggest using other classification models to provide more insights into the data. Each model has its own strengths and weaknesses, and using a variety of models can help to identify patterns and relationships in the data that may be missed by a single model.
+
+Finally, I suggest exploring more advanced techniques such as ensemble learning or deep learning to improve the predictive accuracy of the model. These techniques can be more complex and require more computational resources, but they can also provide significant improvements in performance. 
+
